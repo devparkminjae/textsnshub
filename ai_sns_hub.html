@@ -583,7 +583,7 @@ function doImport() {
 function clearLocalStorage() {
   if (confirm('브라우저 자동 저장 데이터를 삭제할까요?')) {
     localStorage.removeItem(STORAGE_KEY);
-    logGitHub('[삭제됨] 자동 저장 데이터 삭제 완료', 'ok', 'load-log');
+    log('[삭제됨] 자동 저장 데이터 삭제 완료', 'ok', 'load-log');
   }
 }
 
@@ -662,7 +662,8 @@ async function saveStateToGitHub() {
   }
 
   try {
-    const sha = await getGitHubFileSha(config);
+    // 저장 직전에 최신 sha를 다시 조회
+    const latestSha = await getGitHubFileSha(config);
 
     const body = {
       message: `Update SNS state ${new Date().toISOString()}`,
@@ -670,7 +671,9 @@ async function saveStateToGitHub() {
       branch: config.branch
     };
 
-    if (sha) body.sha = sha;
+    if (latestSha) {
+      body.sha = latestSha;
+    }
 
     const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${config.path}`;
 
@@ -683,6 +686,12 @@ async function saveStateToGitHub() {
       },
       body: JSON.stringify(body)
     });
+
+    if (res.status === 409) {
+      throw new Error(
+        '저장 충돌이 발생했습니다. GitHub에서 불러오기를 먼저 한 뒤 다시 저장하세요.'
+      );
+    }
 
     if (!res.ok) {
       const err = await res.text();
