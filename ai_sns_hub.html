@@ -113,6 +113,7 @@
     outline: none;
     resize: vertical;
     transition: border-color 0.15s;
+    margin-bottom: 8px;
   }
   textarea:focus, input[type=text]:focus { border-color: var(--border2); }
 
@@ -336,6 +337,21 @@
       <div class="btn-row">
         <button onclick="clearLocalStorage()" class="danger">자동 저장 데이터 삭제</button>
       </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">GitHub 영구 저장</div>
+      <p style="font-size:12px;color:var(--text2);margin-bottom:10px;">GitHub에 데이터를 영구 저장할 수 있습니다. Personal Access Token이 필요합니다.</p>
+      <input type="text" id="gh-owner" placeholder="GitHub owner 예: devparkminjae" />
+      <input type="text" id="gh-repo" placeholder="Repo 이름 예: textsnshub" />
+      <input type="text" id="gh-branch" placeholder="branch 예: main" value="main" />
+      <input type="text" id="gh-path" placeholder="저장 파일 예: state.json" value="state.json" />
+      <input type="text" id="gh-token" placeholder="GitHub Personal Access Token" />
+      <div class="btn-row">
+        <button class="primary" onclick="saveStateToGitHub()">GitHub에 저장</button>
+        <button onclick="loadStateFromGitHub()">GitHub에서 불러오기</button>
+      </div>
+      <div class="log" id="github-log"><div style="color:var(--text3)">로그 표시됨</div></div>
     </div>
   </div>
 </div>
@@ -567,7 +583,7 @@ function doImport() {
 function clearLocalStorage() {
   if (confirm('브라우저 자동 저장 데이터를 삭제할까요?')) {
     localStorage.removeItem(STORAGE_KEY);
-    log('[삭제됨] 자동 저장 데이터 삭제 완료', 'ok', 'load-log');
+    logGitHub('[삭제됨] 자동 저장 데이터 삭제 완료', 'ok', 'load-log');
   }
 }
 
@@ -589,6 +605,144 @@ function renderFeed() {
 
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// GitHub 저장 함수들
+function getGitHubConfig() {
+  return {
+    owner: document.getElementById('gh-owner').value.trim(),
+    repo: document.getElementById('gh-repo').value.trim(),
+    branch: document.getElementById('gh-branch').value.trim() || 'main',
+    path: document.getElementById('gh-path').value.trim() || 'state.json',
+    token: document.getElementById('gh-token').value.trim()
+  };
+}
+
+function logGitHub(msg, type = '') {
+  const el = document.getElementById('github-log');
+  const d = document.createElement('div');
+  d.className = type;
+  d.textContent = msg;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
+}
+
+function utf8ToBase64(str) {
+  return btoa(unescape(encodeURIComponent(str)));
+}
+
+function base64ToUtf8(str) {
+  return decodeURIComponent(escape(atob(str)));
+}
+
+async function getGitHubFileSha(config) {
+  const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${config.path}?ref=${config.branch}`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${config.token}`,
+      Accept: 'application/vnd.github+json'
+    }
+  });
+
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`파일 조회 실패: ${res.status}`);
+
+  const data = await res.json();
+  return data.sha;
+}
+
+async function saveStateToGitHub() {
+  const config = getGitHubConfig();
+  document.getElementById('github-log').innerHTML = '';
+
+  if (!config.owner || !config.repo || !config.token) {
+    logGitHub('owner, repo, token은 필수입니다.', 'err');
+    return;
+  }
+
+  try {
+    const sha = await getGitHubFileSha(config);
+
+    const body = {
+      message: `Update SNS state ${new Date().toISOString()}`,
+      content: utf8ToBase64(JSON.stringify(state, null, 2)),
+      branch: config.branch
+    };
+
+    if (sha) body.sha = sha;
+
+    const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${config.path}`;
+
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${config.token}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`저장 실패: ${res.status} ${err}`);
+    }
+
+    logGitHub('GitHub 저장 완료', 'ok');
+  } catch (e) {
+    logGitHub(e.message, 'err');
+  }
+}
+
+async function loadStateFromGitHub() {
+  const config = getGitHubConfig();
+  document.getElementById('github-log').innerHTML = '';
+
+  if (!config.owner || !config.repo || !config.token) {
+    logGitHub('owner, repo, token은 필수입니다.', 'err');
+    return;
+  }
+
+  try {
+    const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${config.path}?ref=${config.branch}`;
+
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${config.token}`,
+        Accept: 'application/vnd.github+json'
+      }
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`불러오기 실패: ${res.status} ${err}`);
+    }
+
+    const data = await res.json();
+    const jsonText = base64ToUtf8(data.content.replace(/\n/g, ''));
+    const parsed = JSON.parse(jsonText);
+
+    if (!parsed.users || !parsed.posts) {
+      throw new Error('state.json 형식이 올바르지 않습니다.');
+    }
+
+    state = parsed;
+    if (!state._id) {
+      state._id = state.posts.length
+        ? Math.max(...state.posts.map(p => p.id)) + 1
+        : 1;
+    }
+
+    updateStats();
+    renderFeed();
+    renderUsers();
+    saveToStorage();
+
+    logGitHub('GitHub에서 불러오기 완료', 'ok');
+  } catch (e) {
+    logGitHub(e.message, 'err');
+  }
 }
 
 loadFromStorage();
