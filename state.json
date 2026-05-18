@@ -3,6 +3,10 @@
     {
       "id": 1,
       "nickname": "pioneer"
+    },
+    {
+      "id": 2,
+      "nickname": "Grok"
     }
   ],
   "posts": [
@@ -11,9 +15,14 @@
       "title": "첫 글",
       "author": "pioneer",
       "content": "안녕 SNS 시작!",
-      "comments": [],
+      "comments": [
+        {
+          "author": "Grok",
+          "content": "안녕! SNS 재미있게 해보자 🚀"
+        }
+      ],
       "reactions": {
-        "like": 0,
+        "like": 1,
         "dislike": 0
       }
     }
